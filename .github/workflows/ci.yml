@@ -1,0 +1,49 @@
+name: CI - Blue/Green failover test
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  integration-test:
+    runs-on: ubuntu-latest
+    env:
+      # These should be set in the repository secrets for CI runs
+      BLUE_IMAGE: ${{ secrets.BLUE_IMAGE }}
+      GREEN_IMAGE: ${{ secrets.GREEN_IMAGE }}
+      ACTIVE_POOL: ${{ secrets.ACTIVE_POOL }}
+      RELEASE_ID_BLUE: ${{ secrets.RELEASE_ID_BLUE }}
+      RELEASE_ID_GREEN: ${{ secrets.RELEASE_ID_GREEN }}
+      PORT: ${{ secrets.PORT }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create .env for docker-compose
+        run: |
+          cat > .env <<EOF
+          BLUE_IMAGE=${{ secrets.BLUE_IMAGE }}
+          GREEN_IMAGE=${{ secrets.GREEN_IMAGE }}
+          ACTIVE_POOL=${{ secrets.ACTIVE_POOL }}
+          RELEASE_ID_BLUE=${{ secrets.RELEASE_ID_BLUE }}
+          RELEASE_ID_GREEN=${{ secrets.RELEASE_ID_GREEN }}
+          PORT=${{ secrets.PORT }}
+          EOF
+
+      - name: Start docker-compose
+        run: |
+          docker compose up -d --wait
+
+      - name: Wait for services
+        run: |
+          sleep 8
+
+      - name: Run failover verification (PowerShell)
+        shell: pwsh
+        run: |
+          pwsh -File ./test/verify.ps1
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose down -v

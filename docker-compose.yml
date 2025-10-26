@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx-bg
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.tmpl.conf:/etc/nginx/nginx.tmpl.conf:ro
+      - ./nginx/entrypoint.sh:/docker-entrypoint.d/entrypoint.sh:ro
+      - ./nginx/reload.sh:/reload.sh:ro
+    environment:
+      - ACTIVE_POOL=${ACTIVE_POOL}
+      - BLUE_HOST=app_blue
+      - GREEN_HOST=app_green
+      - APP_PORT=${PORT}
+    depends_on:
+      - app_blue
+      - app_green
+    restart: unless-stopped
+    # use a small entrypoint wrapper via shell to generate final config and run nginx
+    entrypoint: ["/bin/sh","/docker-entrypoint.d/entrypoint.sh"]
+
+  app_blue:
+    image: ${BLUE_IMAGE}
+    container_name: app_blue
+    environment:
+      - RELEASE_ID=${RELEASE_ID_BLUE}
+      - APP_POOL=blue
+      - PORT=${PORT}
+    ports:
+      - "8081:${PORT}"
+    restart: unless-stopped
+
+  app_green:
+    image: ${GREEN_IMAGE}
+    container_name: app_green
+    environment:
+      - RELEASE_ID=${RELEASE_ID_GREEN}
+      - APP_POOL=green
+      - PORT=${PORT}
+    ports:
+      - "8082:${PORT}"
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
