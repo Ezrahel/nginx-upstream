@@ -27,9 +27,28 @@ function Fail($msg) {
     exit 1
 }
 
+# Wait for service to be ready
+function Wait-ForService($url, $maxAttempts = 30, $sleepSec = 2) {
+    Write-Host "Waiting for service at $url..."
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -Method GET -TimeoutSec 2 -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+                Write-Host "Service is ready!"
+                return $true
+            }
+        } catch {
+            Write-Host "Attempt $i/$maxAttempts: Service not ready yet..."
+        }
+        Start-Sleep -Seconds $sleepSec
+    }
+    return $false
+}
+
 Load-DotEnv
 
-$activePool = ($env:ACTIVE_POOL -or 'blue').ToLower()
+# Default to blue if not set
+$activePool = if ($env:ACTIVE_POOL) { $env:ACTIVE_POOL.ToLower() } else { 'blue' }
 if ($activePool -ne 'blue' -and $activePool -ne 'green') { Fail "ACTIVE_POOL must be 'blue' or 'green' (got '$activePool')" }
 
 # ports
@@ -43,38 +62,87 @@ $backupPool = if ($activePool -eq 'blue') { 'green' } else { 'blue' }
 $releaseIdBlue = $env:RELEASE_ID_BLUE
 $releaseIdGreen = $env:RELEASE_ID_GREEN
 
+# Wait for services to be ready
+if (-not (Wait-ForService "$publicUrl/healthz")) {
+    Fail "Timeout waiting for Nginx to be ready"
+}
+if (-not (Wait-ForService "http://localhost:$activePort/healthz")) {
+    Fail "Timeout waiting for active app (port $activePort) to be ready"
+}
+
 Write-Host "Active pool: $activePool (direct port $activePort), backup: $backupPool"
 
 function HttpGet($url, $timeout=8) {
     try {
         $resp = Invoke-WebRequest -Uri $url -Method GET -TimeoutSec $timeout -UseBasicParsing -ErrorAction Stop
-        return $resp
+        return @{
+            Success = $true
+            Response = $resp
+        }
     } catch {
-        return $_.Exception
+        return @{
+            Success = $false
+            Error = $_.Exception.Message
+        }
     }
 }
 
 function HttpPost($url, $timeout=8) {
     try {
         $resp = Invoke-WebRequest -Uri $url -Method POST -TimeoutSec $timeout -UseBasicParsing -ErrorAction Stop
-        return $resp
+        return @{
+            Success = $true
+            Response = $resp
+        }
     } catch {
-        return $_.Exception
+        return @{
+            Success = $false
+            Error = $_.Exception.Message
+        }
     }
 }
 
 # Baseline checks
 Write-Host "Performing baseline checks against $publicUrl/version (expecting pool: $activePool)"
 for ($i=1; $i -le 5; $i++) {
-    $r = HttpGet "$publicUrl/version"
-    if ($r -is [System.Exception]) { Fail "Baseline request #$i failed: $($r.Message)" }
-    if ($r.StatusCode -ne 200) { Fail "Baseline request #$i returned non-200: $($r.StatusCode)" }
+    Write-Host "Baseline request #$i..."
+    $result = HttpGet "$publicUrl/version"
+    if (-not $result.Success) { 
+        Fail "Baseline request #$i failed: $($result.Error)" 
+    }
+    $r = $result.Response
+    
+    if ($r.StatusCode -ne 200) { 
+        Fail "Baseline request #$i returned non-200: $($r.StatusCode)" 
+    }
+    
+    # More detailed header checking
+    if (-not $r.Headers.ContainsKey('X-App-Pool')) {
+        Fail "Baseline request #$i missing X-App-Pool header"
+    }
+    if (-not $r.Headers.ContainsKey('X-Release-Id')) {
+        Fail "Baseline request #$i missing X-Release-Id header"
+    }
+    
     $appPool = $r.Headers['X-App-Pool']
     $releaseId = $r.Headers['X-Release-Id']
-    if ($appPool -ne $activePool) { Fail "Baseline request #$i wrong pool header: $appPool (expected $activePool)" }
-    if ($activePool -eq 'blue') { if ($releaseId -ne $releaseIdBlue) { Fail "Baseline request #$i wrong release id: $releaseId (expected $releaseIdBlue)" } }
-    if ($activePool -eq 'green') { if ($releaseId -ne $releaseIdGreen) { Fail "Baseline request #$i wrong release id: $releaseId (expected $releaseIdGreen)" } }
-    Start-Sleep -Milliseconds 200
+    
+    if ($appPool -ne $activePool) { 
+        Fail "Baseline request #$i wrong pool header: $appPool (expected $activePool)" 
+    }
+    
+    if ($activePool -eq 'blue') { 
+        if ($releaseId -ne $releaseIdBlue) { 
+            Fail "Baseline request #$i wrong release id: $releaseId (expected $releaseIdBlue)" 
+        } 
+    }
+    if ($activePool -eq 'green') { 
+        if ($releaseId -ne $releaseIdGreen) { 
+            Fail "Baseline request #$i wrong release id: $releaseId (expected $releaseIdGreen)" 
+        } 
+    }
+    Write-Host "Request #$i successful - pool: $appPool, release: $releaseId"
+    Start-Sleep -Milliseconds 500
 }
 Write-Host "Baseline checks passed."
 
@@ -82,8 +150,11 @@ Write-Host "Baseline checks passed."
 $chaosUrl = "http://localhost:$activePort/chaos/start?mode=error"
 Write-Host "Starting chaos on active app: $chaosUrl"
 $cr = HttpPost $chaosUrl
-if ($cr -is [System.Exception]) { Write-Warning "Chaos start request failed (non-fatal): $($cr.Message)" }
-else { Write-Host "Chaos started." }
+if (-not $cr.Success) { 
+    Write-Warning "Chaos start request failed (non-fatal): $($cr.Error)" 
+} else { 
+    Write-Host "Chaos started." 
+}
 
 # Run loop for up to 10s to collect responses
 $durationSec = 10
@@ -91,23 +162,43 @@ $endTime = (Get-Date).AddSeconds($durationSec)
 $total = 0
 $backupCount = 0
 
+Write-Host "Starting failover test loop for ${durationSec}s..."
 while ((Get-Date) -lt $endTime) {
-    $resp = HttpGet "$publicUrl/version" 8
-    if ($resp -is [System.Exception]) {
-        Fail "During failover loop received an exception: $($resp.Message)"
+    $result = HttpGet "$publicUrl/version" 8
+    if (-not $result.Success) {
+        Write-Host "Request failed: $($result.Error)"
+        continue
     }
-    if ($resp.StatusCode -ne 200) { Fail "During failover loop received non-200: $($resp.StatusCode)" }
+    $resp = $result.Response
+    if ($resp.StatusCode -ne 200) { 
+        Fail "During failover loop received non-200: $($resp.StatusCode)" 
+    }
+    
+    if (-not $resp.Headers.ContainsKey('X-App-Pool')) {
+        Write-Warning "Response missing X-App-Pool header"
+        continue
+    }
+    
     $pool = $resp.Headers['X-App-Pool']
-    if ($pool -eq $backupPool) { $backupCount++ }
+    if ($pool -eq $backupPool) { 
+        $backupCount++ 
+        Write-Host "Got response from backup pool ($backupPool)"
+    } else {
+        Write-Host "Got response from active pool ($activePool)"
+    }
     $total++
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 500
 }
 
 # Stop chaos
 $chaosStop = "http://localhost:$activePort/chaos/stop"
 Write-Host "Stopping chaos on active app: $chaosStop"
 $sr = HttpPost $chaosStop
-if ($sr -is [System.Exception]) { Write-Warning "Chaos stop request failed: $($sr.Message)" } else { Write-Host "Chaos stopped." }
+if (-not $sr.Success) { 
+    Write-Warning "Chaos stop request failed: $($sr.Error)" 
+} else { 
+    Write-Host "Chaos stopped." 
+}
 
 if ($total -eq 0) { Fail "No requests made during failover loop" }
 $percent = ($backupCount / $total) * 100
