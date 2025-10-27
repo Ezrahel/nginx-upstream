@@ -8,26 +8,27 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     env:
-      # These should be set in the repository secrets for CI runs
-      BLUE_IMAGE: ${{ secrets.BLUE_IMAGE }}
-      GREEN_IMAGE: ${{ secrets.GREEN_IMAGE }}
-      ACTIVE_POOL: ${{ secrets.ACTIVE_POOL }}
-      RELEASE_ID_BLUE: ${{ secrets.RELEASE_ID_BLUE }}
-      RELEASE_ID_GREEN: ${{ secrets.RELEASE_ID_GREEN }}
-      PORT: ${{ secrets.PORT }}
+      # Default values for testing - override with repository secrets in production
+      BLUE_IMAGE: httpd:2.4-alpine  # Default test image that responds to healthz
+      GREEN_IMAGE: httpd:2.4-alpine
+      ACTIVE_POOL: blue
+      RELEASE_ID_BLUE: blue-test-release
+      RELEASE_ID_GREEN: green-test-release
+      PORT: 80
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Create .env for docker-compose
         run: |
+          # Use secrets if available, otherwise fall back to default env values
           cat > .env <<EOF
-          BLUE_IMAGE=${{ secrets.BLUE_IMAGE }}
-          GREEN_IMAGE=${{ secrets.GREEN_IMAGE }}
-          ACTIVE_POOL=${{ secrets.ACTIVE_POOL }}
-          RELEASE_ID_BLUE=${{ secrets.RELEASE_ID_BLUE }}
-          RELEASE_ID_GREEN=${{ secrets.RELEASE_ID_GREEN }}
-          PORT=${{ secrets.PORT }}
+          BLUE_IMAGE=${BLUE_IMAGE}
+          GREEN_IMAGE=${GREEN_IMAGE}
+          ACTIVE_POOL=${ACTIVE_POOL}
+          RELEASE_ID_BLUE=${RELEASE_ID_BLUE}
+          RELEASE_ID_GREEN=${RELEASE_ID_GREEN}
+          PORT=${PORT}
           EOF
 
       - name: Start docker-compose

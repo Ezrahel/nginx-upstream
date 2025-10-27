@@ -29,6 +29,8 @@ services:
       - PORT=${PORT:-3000}
     ports:
       - "8081:${PORT:-3000}"
+    volumes:
+      - ./config/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
     restart: unless-stopped
 
   app_green:
@@ -40,6 +42,8 @@ services:
       - PORT=${PORT:-3000}
     ports:
       - "8082:${PORT:-3000}"
+    volumes:
+      - ./config/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
     restart: unless-stopped
 
 networks:
