@@ -38,7 +38,7 @@ function Wait-ForService($url, $maxAttempts = 30, $sleepSec = 2) {
                 return $true
             }
         } catch {
-            Write-Host "Attempt $i/$maxAttempts: Service not ready yet..."
+            Write-Host "Attempt ${i} of ${maxAttempts}: Service not ready yet..."
         }
         Start-Sleep -Seconds $sleepSec
     }
