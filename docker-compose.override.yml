@@ -1,0 +1,21 @@
+# Override for local development - uses local test app instead of remote images
+version: '3.8'
+
+services:
+  app_blue:
+    build:
+      context: ./test/local
+      dockerfile: Dockerfile
+    environment:
+      - APP_POOL=blue
+      - RELEASE_ID=${RELEASE_ID_BLUE:-blue-test}
+      - PORT=${PORT:-3000}
+
+  app_green:
+    build:
+      context: ./test/local
+      dockerfile: Dockerfile
+    environment:
+      - APP_POOL=green
+      - RELEASE_ID=${RELEASE_ID_GREEN:-green-test}
+      - PORT=${PORT:-3000}
