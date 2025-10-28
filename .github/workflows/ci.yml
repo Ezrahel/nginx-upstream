@@ -31,13 +31,13 @@ jobs:
           PORT=${PORT}
           EOF
 
-      - name: Start docker-compose
+      - name: Start docker-compose and wait for health checks
         run: |
           docker compose up -d --wait
-
-      - name: Wait for services
-        run: |
-          sleep 8
+          # Additional wait to ensure Nginx is fully configured
+          sleep 5
+          # Verify services are responding
+          curl --retry 5 --retry-delay 2 --retry-connrefused http://localhost:8080/healthz || (docker compose logs && exit 1)
 
       - name: Run failover verification (PowerShell)
         shell: pwsh

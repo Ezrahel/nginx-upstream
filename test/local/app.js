@@ -25,8 +25,16 @@ app.get('/version', (req, res) => {
     });
 });
 
+// Track app readiness
+let isReady = false;
+setTimeout(() => { isReady = true; }, 2000); // Give 2s for everything to initialize
+
 // Health check endpoint
 app.get('/healthz', (req, res) => {
+    if (!isReady) {
+        res.status(503).json({ status: 'starting' });
+        return;
+    }
     if (isChaos) {
         res.status(500).json({ status: 'unhealthy', message: 'Chaos mode active' });
         return;
