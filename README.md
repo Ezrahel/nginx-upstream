@@ -56,7 +56,7 @@ Manual toggling of active pool (CI friendly)
 - To change active pool in container environment, update `.env` and then regenerate and reload nginx inside the `nginx-bg` container:
 
 ```powershell
-# after updating .env and restarting container env (or you can set env via docker-compose up -d)
+# after updating my .env and restarting container env (or you can set env via docker-compose up -d)
 docker exec nginx-bg /reload.sh
 ```
 
@@ -87,6 +87,3 @@ This repository includes a simple automated verification harness and a GitHub Ac
   - `RELEASE_ID_BLUE`, `RELEASE_ID_GREEN` — release ids passed into the containers
   - `PORT` — port the apps listen on inside the container (default `3000`)
 
-The workflow brings up the Compose stack, waits briefly, runs `test/verify.ps1` (using PowerShell), and tears down the stack. Add the required secrets to your repository before running CI.
-
-If you want me to tune the verification thresholds, make the script more conservative, or convert the script to a cross-platform Node/Python runner, I can do that next.

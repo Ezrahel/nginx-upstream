@@ -1,9 +1,4 @@
-<#
-PowerShell verification script for Blue/Green Nginx failover.
-Reads environment variables from .env if present, otherwise uses process env.
 
-Exits with code 0 on success, 1 on failure.
-#>
 param()
 
 Set-StrictMode -Version Latest
@@ -27,7 +22,6 @@ function Fail($msg) {
     exit 1
 }
 
-# Wait for service to be ready
 function Wait-ForService($url, $maxAttempts = 30, $sleepSec = 2) {
     Write-Host "Waiting for service at $url..."
     for ($i = 1; $i -le $maxAttempts; $i++) {
