@@ -8,13 +8,13 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     env:
-      # Default values for testing - override with repository secrets in production
-      BLUE_IMAGE: httpd:2.4-alpine  # Default test image that responds to healthz
-      GREEN_IMAGE: httpd:2.4-alpine
-      ACTIVE_POOL: blue
-      RELEASE_ID_BLUE: blue-test-release
-      RELEASE_ID_GREEN: green-test-release
-      PORT: 80
+      # These must be set in repository secrets
+      BLUE_IMAGE: ${{ secrets.BLUE_IMAGE }}
+      GREEN_IMAGE: ${{ secrets.GREEN_IMAGE }}
+      ACTIVE_POOL: ${{ secrets.ACTIVE_POOL }}
+      RELEASE_ID_BLUE: ${{ secrets.RELEASE_ID_BLUE }}
+      RELEASE_ID_GREEN: ${{ secrets.RELEASE_ID_GREEN }}
+      PORT: ${{ secrets.PORT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

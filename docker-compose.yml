@@ -14,10 +14,8 @@ services:
       - GREEN_HOST=app_green
       - APP_PORT=${PORT:-3000}
     depends_on:
-      app_blue:
-        condition: service_healthy
-      app_green:
-        condition: service_healthy
+      - app_blue
+      - app_green
     restart: unless-stopped
     # use a small entrypoint wrapper via shell to generate final config and run nginx
     entrypoint: ["/bin/sh","/docker-entrypoint.d/entrypoint.sh"]
@@ -31,15 +29,7 @@ services:
       - PORT=${PORT:-3000}
     ports:
       - "8081:${PORT:-3000}"
-    volumes:
-      - ./config/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-3000}/healthz"]
-      interval: 2s
-      timeout: 2s
-      retries: 3
-      start_period: 5s
 
   app_green:
     image: ${GREEN_IMAGE}
@@ -50,15 +40,7 @@ services:
       - PORT=${PORT:-3000}
     ports:
       - "8082:${PORT:-3000}"
-    volumes:
-      - ./config/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-3000}/healthz"]
-      interval: 2s
-      timeout: 2s
-      retries: 3
-      start_period: 5s
 
 networks:
   default:

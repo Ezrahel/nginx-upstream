@@ -1,6 +1,6 @@
-# Blue/Green with Nginx Upstreams (Auto-Failover + Manual Toggle)
+# Blue/Green Nginx Upstream with Auto-Failover
 
-This repository provides a Docker Compose setup that places an Nginx reverse proxy in front of two pre-built Node.js app images: `app_blue` and `app_green` (Blue/Green).
+Implements blue/green deployment pattern using Nginx upstream configuration with automatic failover. Uses pre-built Node.js container images with health and chaos endpoints.
 
 Goals implemented
 - All traffic goes to the active pool by default (controlled by `ACTIVE_POOL`)
