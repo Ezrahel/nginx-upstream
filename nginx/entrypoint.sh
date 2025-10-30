@@ -28,4 +28,11 @@ sed "s/__PRIMARY_HOST__/${PRIMARY_HOST}/g; s/__BACKUP_HOST__/${BACKUP_HOST}/g; s
 
 # start nginx in foreground
 echo "Starting nginx with PRIMARY=${PRIMARY_HOST}:${APP_PORT} BACKUP=${BACKUP_HOST}:${APP_PORT}"
+
+# Ensure log directory exists (shared volume may be mounted)
+mkdir -p /var/log/nginx
+touch /var/log/nginx/access.log || true
+# Try to set ownership to nginx user if possible (ignore errors)
+chown nginx:nginx /var/log/nginx || true
+
 nginx -g 'daemon off;'

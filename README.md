@@ -27,6 +27,22 @@ Environment variables (in `.env`)
 - `RELEASE_ID_GREEN` — passed into Green container as `RELEASE_ID` env
 - `PORT` — port the application listens on inside container (default 3000)
 
+Alerting and observability env vars
+- `SLACK_WEBHOOK_URL` — Slack incoming webhook URL (required for real alerts)
+- `ERROR_RATE_THRESHOLD` — percentage of 5xx to trigger alert (default `2`)
+- `WINDOW_SIZE` — number of recent requests used to compute error rate (default `200`)
+- `ALERT_COOLDOWN_SEC` — cooldown between identical alerts (default `300`)
+- `MAINTENANCE_MODE` — if `true`, suppresses watcher alerts during maintenance
+
+Observability & Alerts (Stage 3)
+
+This repository includes a small Python sidecar `alert_watcher` that tails the Nginx access log (`/var/log/nginx/access.log`) and posts Slack alerts for:
+
+- Failover events (pool changes detected in `X-App-Pool` header)
+- Elevated upstream 5xx error rates over a sliding window
+
+Logs are written to `./logs/nginx/access.log` and mounted into the watcher container. Configure Slack and thresholds in `.env` and start the stack to enable alerts.
+
 How it works
 1. Template placeholders `__PRIMARY_HOST__`, `__BACKUP_HOST__`, and `__APP_PORT__` are replaced by `entrypoint.sh` using the `ACTIVE_POOL` environment variable.
 2. Nginx upstream sets the primary server with `max_fails=1` and `fail_timeout=2s` and the other server as `backup`.

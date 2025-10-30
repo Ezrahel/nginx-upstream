@@ -8,6 +8,8 @@ services:
       - ./nginx/nginx.tmpl.conf:/etc/nginx/nginx.tmpl.conf:ro
       - ./nginx/entrypoint.sh:/docker-entrypoint.d/entrypoint.sh:ro
       - ./nginx/reload.sh:/reload.sh:ro
+      # Shared volume for logs
+      - nginx_logs:/var/log/nginx
     environment:
       - ACTIVE_POOL=${ACTIVE_POOL}
       - BLUE_HOST=app_blue
@@ -42,6 +44,27 @@ services:
       - "8082:${PORT:-3000}"
     restart: unless-stopped
 
+  alert_watcher:
+    image: python:3.11-alpine
+    container_name: alert_watcher
+    volumes:
+      - nginx_logs:/var/log/nginx:ro
+      - ./watcher:/watcher:ro
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - ERROR_RATE_THRESHOLD=${ERROR_RATE_THRESHOLD:-2}
+      - WINDOW_SIZE=${WINDOW_SIZE:-200}
+      - ALERT_COOLDOWN_SEC=${ALERT_COOLDOWN_SEC:-300}
+      - ACTIVE_POOL=${ACTIVE_POOL}
+      - MAINTENANCE_MODE=${MAINTENANCE_MODE:-false}
+    depends_on:
+      - nginx
+    entrypoint: ["/bin/sh","-c","python -m pip install -r /watcher/requirements.txt && python -u /watcher/watcher.py"]
+
 networks:
   default:
     driver: bridge
+
+volumes:
+  nginx_logs:
+    driver: local
