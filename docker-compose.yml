@@ -59,7 +59,7 @@ services:
       - MAINTENANCE_MODE=${MAINTENANCE_MODE:-false}
     depends_on:
       - nginx
-    entrypoint: ["/bin/sh","-c","python -m pip install -r /watcher/requirements.txt && python -u /watcher/watcher.py"]
+    entrypoint: ["/bin/sh","-c","pip install -r /watcher/requirements.txt && python -u /watcher/watcher.py"]
 
 networks:
   default:

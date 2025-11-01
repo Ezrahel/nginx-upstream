@@ -18,8 +18,8 @@ import os
 import time
 import json
 import collections
-import threading
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 
 import requests
 
@@ -33,180 +33,229 @@ MAINTENANCE_MODE = os.environ.get('MAINTENANCE_MODE', 'false').lower() in ('1','
 
 # state
 last_pool = ACTIVE_POOL
-lock = threading.Lock()
 recent = collections.deque(maxlen=WINDOW_SIZE)  # store booleans: True=5xx, False=not 5xx
 last_alert = {'failover': None, 'error_rate': None}
 
 
 def post_slack(text, title=None):
+    """Post alert to Slack webhook"""
     if MAINTENANCE_MODE:
-        print('Maintenance mode - suppressing alert:', text)
+        print(f'[MAINTENANCE MODE] Suppressing alert: {text}')
+        sys.stdout.flush()
         return
     if not SLACK_WEBHOOK:
-        print('No SLACK_WEBHOOK_URL configured; would alert:', text)
+        print(f'[NO WEBHOOK] Would alert: {text}')
+        sys.stdout.flush()
         return
+    
     payload = {"text": (f"*{title}*\n" if title else "") + text}
     try:
         r = requests.post(SLACK_WEBHOOK, json=payload, timeout=5)
         r.raise_for_status()
+        print(f'[SLACK] Posted alert: {title}')
+        sys.stdout.flush()
     except Exception as e:
-        print('Failed to post Slack alert:', e)
+        print(f'[ERROR] Failed to post Slack alert: {e}')
+        sys.stdout.flush()
 
 
 def send_failover_alert(old_pool, new_pool, sample_line):
+    """Send failover detection alert with cooldown"""
     now = datetime.utcnow()
-    if last_alert['failover'] and (now - last_alert['failover']).total_seconds() < ALERT_COOLDOWN:
-        print('Failover alert suppressed (cooldown)')
-        return
+    if last_alert['failover']:
+        elapsed = (now - last_alert['failover']).total_seconds()
+        if elapsed < ALERT_COOLDOWN:
+            print(f'[COOLDOWN] Failover alert suppressed ({elapsed:.0f}s < {ALERT_COOLDOWN}s)')
+            sys.stdout.flush()
+            return
+    
     last_alert['failover'] = now
-    text = f'Failover detected: {old_pool} -> {new_pool}\nSample: {sample_line}'
-    print('Sending failover alert:', text)
-    post_slack(text, title='Failover Detected')
+    text = (f'🔄 Pool changed from *{old_pool}* to *{new_pool}*\n'
+            f'Time: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC\n'
+            f'```{sample_line[:500]}```')
+    print(f'[ALERT] Failover: {old_pool} -> {new_pool}')
+    sys.stdout.flush()
+    post_slack(text, title='🚨 Failover Detected')
 
 
-def send_error_rate_alert(rate, window_lines):
+def send_error_rate_alert(rate, total_requests, error_count):
+    """Send high error rate alert with cooldown"""
     now = datetime.utcnow()
-    if last_alert['error_rate'] and (now - last_alert['error_rate']).total_seconds() < ALERT_COOLDOWN:
-        print('Error-rate alert suppressed (cooldown)')
-        return
+    if last_alert['error_rate']:
+        elapsed = (now - last_alert['error_rate']).total_seconds()
+        if elapsed < ALERT_COOLDOWN:
+            print(f'[COOLDOWN] Error-rate alert suppressed ({elapsed:.0f}s < {ALERT_COOLDOWN}s)')
+            sys.stdout.flush()
+            return
+    
     last_alert['error_rate'] = now
-    text = f'High upstream error rate: {rate:.2f}% over last {len(window_lines)} requests\nSample lines:\n' + '\n'.join(window_lines[-5:])
-    print('Sending error-rate alert:', text)
-    post_slack(text, title='High Upstream Error Rate')
+    text = (f'⚠️ High upstream error rate detected\n'
+            f'Error Rate: *{rate:.2f}%* ({error_count}/{total_requests} requests)\n'
+            f'Threshold: {ERROR_RATE_THRESHOLD}%\n'
+            f'Window: {total_requests} requests\n'
+            f'Time: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC')
+    print(f'[ALERT] Error rate: {rate:.2f}% ({error_count}/{total_requests})')
+    sys.stdout.flush()
+    post_slack(text, title='🚨 High Upstream Error Rate')
 
 
 def parse_log_line(line):
-    import sys
+    """Parse nginx JSON log line and extract status, pool, and full data"""
     try:
         line = line.strip()
         if not line:
             return None, None, None
-            
-        print(f"Parsing log line: {line[:200]}")  # Debug: show the start of the line
-        sys.stdout.flush()
         
         data = json.loads(line)
         status = int(data.get('status', 0))
-        pool = data.get('pool') or data.get('upstream_pool') or None
         
-        print(f"Parsed line - status: {status}, pool: {pool}")  # Debug output
-        sys.stdout.flush()
+        # Extract pool - nginx log format uses "pool" field with $upstream_http_x_app_pool
+        pool = data.get('pool', '').strip()
+        
+        # Handle cases where pool might be empty string or "-"
+        if not pool or pool == '-':
+            pool = None
+        
         return status, pool, data
+        
+    except json.JSONDecodeError as e:
+        print(f'[ERROR] JSON parse error: {e} | Line: {line[:100]}...')
+        sys.stdout.flush()
+        return None, None, None
     except Exception as e:
-        print(f"Error parsing log line: {e}, line: {line[:200]}")  # Debug: show parsing error
+        print(f'[ERROR] Parse error: {e} | Line: {line[:100]}...')
         sys.stdout.flush()
         return None, None, None
 
 
 def tail_log(path):
-    """Follow a file by reading in chunks"""
-    import sys
-    print(f"Starting tail_log for {path}")
+    """Follow a file by reading in chunks, handling rotation"""
+    print(f'[TAIL] Starting tail on {path}')
     sys.stdout.flush()
+    
     position = 0
     
     while True:
         try:
             if not os.path.exists(path):
-                print(f"Waiting for {path} to be created...")
+                print(f'[TAIL] Waiting for {path} to be created...')
                 sys.stdout.flush()
                 time.sleep(1)
                 continue
-                
+            
             size = os.path.getsize(path)
+            
             if size > position:
+                # File has grown, read new data
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                     if position > 0:
                         f.seek(position)
                     new_data = f.read()
                     if new_data:
                         position = f.tell()
-                        print(f"Read {len(new_data)} bytes from log file")
-                        sys.stdout.flush()
                         for line in new_data.splitlines():
-                            yield line.strip()
+                            if line.strip():
+                                yield line.strip()
             elif size < position:
-                # File was truncated or rotated
-                print("Log file was truncated, resetting position")
+                # File was truncated or rotated, reset position
+                print('[TAIL] Log file truncated/rotated, resetting position')
                 sys.stdout.flush()
                 position = 0
+            
             time.sleep(0.1)
+            
         except Exception as e:
-            print(f"Error reading log file: {e}")
+            print(f'[ERROR] Error reading log file: {e}')
             sys.stdout.flush()
             time.sleep(1)
 
 
 def monitor():
+    """Main monitoring loop - tail logs and detect failovers/error rates"""
     global last_pool
-    window_lines = []
-    print("Starting monitor function")
-    print(f"Initial configuration:")
-    print(f"SLACK_WEBHOOK configured: {bool(SLACK_WEBHOOK)}")
-    print(f"ERROR_RATE_THRESHOLD: {ERROR_RATE_THRESHOLD}%")
-    print(f"WINDOW_SIZE: {WINDOW_SIZE}")
-    print(f"ALERT_COOLDOWN: {ALERT_COOLDOWN}s")
-    print(f"ACTIVE_POOL: {ACTIVE_POOL}")
-    print(f"MAINTENANCE_MODE: {MAINTENANCE_MODE}")
+    
+    print('[MONITOR] Starting monitoring')
+    print(f'[CONFIG] SLACK_WEBHOOK: {"configured" if SLACK_WEBHOOK else "NOT SET"}')
+    print(f'[CONFIG] ERROR_RATE_THRESHOLD: {ERROR_RATE_THRESHOLD}%')
+    print(f'[CONFIG] WINDOW_SIZE: {WINDOW_SIZE}')
+    print(f'[CONFIG] ALERT_COOLDOWN: {ALERT_COOLDOWN}s')
+    print(f'[CONFIG] INITIAL ACTIVE_POOL: {ACTIVE_POOL}')
+    print(f'[CONFIG] MAINTENANCE_MODE: {MAINTENANCE_MODE}')
+    sys.stdout.flush()
+    
+    request_count = 0
     
     for line in tail_log(LOG_PATH):
         try:
             status, pool, data = parse_log_line(line)
+            
             if status is None:
-                print(f"Failed to parse log line: {line[:200]}...")
                 continue
-                
-            print(f"Processed line - status: {status}, pool: {pool}")
+            
+            request_count += 1
             is_5xx = 500 <= status <= 599
             
-            with lock:
-                recent.append(is_5xx)
-                window_lines.append(line)
-                if len(window_lines) > WINDOW_SIZE:
-                    window_lines = window_lines[-WINDOW_SIZE:]
-
-                # detect pool change
-                if pool and pool != last_pool:
-                    old = last_pool
+            # Track error rate
+            recent.append(is_5xx)
+            
+            # Log occasionally for visibility
+            if request_count % 50 == 0:
+                error_count = sum(recent)
+                current_rate = (error_count / len(recent)) * 100 if recent else 0
+                print(f'[STATS] Requests: {request_count} | Window: {len(recent)} | '
+                      f'Errors: {error_count} ({current_rate:.2f}%) | Pool: {pool or "unknown"}')
+                sys.stdout.flush()
+            
+            # Detect pool change (failover)
+            if pool:
+                if pool != last_pool:
+                    print(f'[FAILOVER] Pool changed: {last_pool} -> {pool}')
+                    sys.stdout.flush()
+                    old_pool = last_pool
                     last_pool = pool
-                    send_failover_alert(old, pool, line)
-
-                # error rate
-                if len(recent) >= max(10, WINDOW_SIZE//4):
-                    rate = (sum(recent) / len(recent)) * 100.0
-                    if rate >= ERROR_RATE_THRESHOLD:
-                        send_error_rate_alert(rate, window_lines)
+                    send_failover_alert(old_pool, pool, line)
+            
+            # Check error rate threshold
+            if len(recent) >= max(10, WINDOW_SIZE // 4):
+                error_count = sum(recent)
+                rate = (error_count / len(recent)) * 100.0
+                
+                if rate >= ERROR_RATE_THRESHOLD:
+                    send_error_rate_alert(rate, len(recent), error_count)
+        
         except Exception as e:
-            print(f"Error processing log line: {e}")
+            print(f'[ERROR] Processing log line: {e}')
+            sys.stdout.flush()
 
 
 if __name__ == '__main__':
-    print('Watcher starting. LOG_PATH=', LOG_PATH)
+    print('='*60)
+    print('Log Watcher Starting')
+    print(f'LOG_PATH: {LOG_PATH}')
+    print('='*60)
+    sys.stdout.flush()
     
-    # Test Slack webhook
-    if SLACK_WEBHOOK:
-        print("Testing Slack webhook...")
-        try:
-            post_slack("Alert watcher starting up", title="Watcher Test")
-            print("Slack webhook test successful")
-        except Exception as e:
-            print(f"Warning: Slack webhook test failed: {e}")
-    else:
-        print("Warning: No SLACK_WEBHOOK_URL configured")
-    
-    # wait for log file to appear
+    # Wait for log file to appear
     timeout = 60
     waited = 0
     while not os.path.exists(LOG_PATH) and waited < timeout:
         time.sleep(0.5)
         waited += 0.5
+    
     if not os.path.exists(LOG_PATH):
-        print('Log file not found, exiting')
+        print('[FATAL] Log file not found after timeout, exiting')
+        sys.stdout.flush()
         exit(1)
+    
+    print(f'[OK] Log file found: {LOG_PATH}')
+    sys.stdout.flush()
     
     try:
         monitor()
     except KeyboardInterrupt:
-        print('Watcher exiting')
+        print('\n[EXIT] Watcher stopped by user')
+        sys.stdout.flush()
     except Exception as e:
-        print(f'Fatal error in watcher: {e}')
+        print(f'[FATAL] Watcher crashed: {e}')
+        sys.stdout.flush()
+        raise
